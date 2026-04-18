@@ -22,49 +22,63 @@ class RouteStrategy:
     notes: str = ""
 
 
-# === ITERATION 0: wide-net baseline ==========================================
-# One 14-day sample per month across the rest of 2026. Max 2 stops.
+# === ITERATION 1: shoulder-season focus with fresh dates =====================
+# Fire #1 had all 8 scrapes fail (err=8 per route) — likely transient network
+# issues. Retrying with fresh date pairs, focusing on shoulder seasons (May,
+# Sep, Oct) and mixing trip lengths (10, 14, 17 days). Still max_stops=2 for
+# maximum coverage. Re-use some Iter 0 dates + add new ones.
 STRATEGY: dict[str, RouteStrategy] = {
     "LHR-BLR": RouteStrategy(
         date_pairs=[
-            ("2026-05-12", "2026-05-26"),
-            ("2026-06-09", "2026-06-23"),
-            ("2026-07-14", "2026-07-28"),
-            ("2026-08-11", "2026-08-25"),
-            ("2026-09-15", "2026-09-29"),
-            ("2026-10-13", "2026-10-27"),
-            ("2026-11-10", "2026-11-24"),
-            ("2026-12-01", "2026-12-15"),
+            ("2026-05-05", "2026-05-19"),   # early May, 14d
+            ("2026-05-19", "2026-05-29"),   # late May, 10d
+            ("2026-09-01", "2026-09-15"),   # early Sep, 14d
+            ("2026-09-22", "2026-10-06"),   # late Sep, 14d
+            ("2026-10-06", "2026-10-23"),   # Oct, 17d
+            ("2026-11-03", "2026-11-17"),   # early Nov, 14d
+            ("2026-12-05", "2026-12-19"),   # early Dec, 14d
+            ("2026-06-02", "2026-06-16"),   # Jun, 14d
         ],
         max_stops=2,
-        notes="Iter 0: one 14-day sample per month May–Dec 2026 to find the cheapest months.",
+        notes=(
+            "Iter 1: fire #1 all-errors, retrying with fresh date pairs. "
+            "Shoulder focus: May, Sep-Oct. Mixed trip lengths (10/14/17d). "
+            "If errors persist again, scraper is blocked in this sandbox."
+        ),
     ),
     "LHR-ATL": RouteStrategy(
         date_pairs=[
-            ("2026-05-12", "2026-05-26"),
-            ("2026-06-09", "2026-06-23"),
-            ("2026-07-14", "2026-07-28"),
-            ("2026-08-11", "2026-08-25"),
-            ("2026-09-15", "2026-09-29"),
-            ("2026-10-13", "2026-10-27"),
-            ("2026-11-10", "2026-11-24"),
-            ("2026-12-01", "2026-12-15"),
+            ("2026-05-05", "2026-05-19"),   # early May, 14d
+            ("2026-05-19", "2026-05-29"),   # late May, 10d
+            ("2026-09-01", "2026-09-15"),   # early Sep, 14d
+            ("2026-09-22", "2026-10-06"),   # late Sep, 14d
+            ("2026-10-06", "2026-10-23"),   # Oct, 17d
+            ("2026-11-03", "2026-11-17"),   # early Nov, 14d
+            ("2026-12-05", "2026-12-19"),   # early Dec, 14d
+            ("2026-06-02", "2026-06-16"),   # Jun, 14d
         ],
         max_stops=2,
-        notes="Iter 0: same cadence as LHR-BLR — shoulder seasons likely cheapest.",
+        notes=(
+            "Iter 1: same approach as BLR. ATL is mostly nonstop BA/VS/DL; "
+            "shoulder seasons (May, Sep-Oct) expected cheapest. "
+            "Sub-$3500 with European connection is a real find."
+        ),
     ),
     "LHR-LAX": RouteStrategy(
         date_pairs=[
-            ("2026-05-12", "2026-05-26"),
-            ("2026-06-09", "2026-06-23"),
-            ("2026-07-14", "2026-07-28"),
-            ("2026-08-11", "2026-08-25"),
-            ("2026-09-15", "2026-09-29"),
-            ("2026-10-13", "2026-10-27"),
-            ("2026-11-10", "2026-11-24"),
-            ("2026-12-01", "2026-12-15"),
+            ("2026-05-05", "2026-05-19"),   # early May, 14d
+            ("2026-05-19", "2026-05-29"),   # late May, 10d
+            ("2026-09-01", "2026-09-15"),   # early Sep, 14d
+            ("2026-09-22", "2026-10-06"),   # late Sep, 14d
+            ("2026-10-06", "2026-10-23"),   # Oct, 17d
+            ("2026-11-03", "2026-11-17"),   # early Nov, 14d
+            ("2026-12-05", "2026-12-19"),   # early Dec, 14d
+            ("2026-06-02", "2026-06-16"),   # Jun, 14d
         ],
         max_stops=2,
-        notes="Iter 0: same cadence. LAX is the longest route; direct BA/VS premium.",
+        notes=(
+            "Iter 1: LAX nonstop BA/VS/AA usually $4500-7000; one-stop via "
+            "BOS/JFK/ORD/EWR sometimes $3000-4000. Shoulder seasons first."
+        ),
     ),
 }
