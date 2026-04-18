@@ -54,7 +54,20 @@ Run these steps in order each fire. Bash from `/Users/surajbhagavan/flight-searc
    current `strategy.py`, decide a new STRATEGY dict, and write it. Guidance
    in the next section.
 
-6. **Done.** The next fire happens 30 min later.
+6. **Persist state.** `runs/` is tracked in git so state survives across
+   remote fires. Commit and push:
+   ```bash
+   git add runs/ strategy.py
+   git -c user.email=routine@flight-searcher -c user.name="flight-searcher routine" \
+       commit -m "fire #N: <one-line summary, e.g. 'kept new best mean=0.092'>"
+   git push origin main
+   ```
+   If `git push` fails (auth missing), post the diff in your final message
+   and tell the user — without push, the next fire will start from the last
+   pushed state.
+
+7. **Done.** Post a one-line summary (best per route or stop reason) and
+   exit. The next fire happens at the top of the next hour.
 
 ## How to choose the next strategy
 

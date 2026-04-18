@@ -11,5 +11,5 @@ wheels/
 
 # Project runtime
 cache.sqlite
-runs/
 .env
+# runs/ is committed so state persists across remote routine fires.
