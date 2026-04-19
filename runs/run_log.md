@@ -30,3 +30,14 @@ iter 3: mean=n/a  LHR-BLR=  n/a  LHR-ATL=  n/a  LHR-LAX=  n/a
   LHR-LAX:   (n=0, err=4)
     notes: Iter 2: same sandbox-blocked situation. LAX one-stop via BOS/JFK/ORD/EWR target $3000-4000. Ready for unblocked env.
   -> reverting (best mean=n/a, no-improve streak=3)
+
+# Resumed 2026-04-19 01:10:21
+
+iter 4: mean=n/a  LHR-BLR=  n/a  LHR-ATL=  n/a  LHR-LAX=  n/a
+  LHR-BLR:   (n=0, err=4)
+    notes: Iter 3: EXPLORE — rotating to Jun/Jul/Aug/Dec, months not yet probed. Fires 1-3 all 403; strategy rotation ensures full month coverage for when sandbox IP unblocks. BLR: IndiGo/AI $1500-1800, Gulf $2500-3500.
+  LHR-ATL:   (n=0, err=4)
+    notes: Iter 3: EXPLORE — same Jun/Jul/Aug/Dec rotation as BLR. ATL target: BA/VS/DL nonstop $3500-5500 or sub-$3500 via European hub.
+  LHR-LAX:   (n=0, err=4)
+    notes: Iter 3: EXPLORE — Jun/Jul/Aug/Dec rotation. LAX target: one-stop via BOS/JFK/ORD/EWR at $3000-4000.
+  -> reverting (best mean=n/a, no-improve streak=4)

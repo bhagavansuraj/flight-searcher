@@ -22,50 +22,65 @@ class RouteStrategy:
     notes: str = ""
 
 
-# === ITERATION 3: rotate to unexplored months (Jun/Jul/Aug/Dec) ===============
-# Fires #1-3 all 403'd — sandbox IP blocked by Google Flights on every attempt.
-# Previous strategies covered May/Sep/Oct/Nov. Rotating to Jun/Jul/Aug/Dec so
-# that when the environment unblocks, we'll have full month coverage ready.
-# Mixed trip lengths (10d / 14d / 17d / 21d) within each route to diversify.
+# === ITERATION 4: best shoulder season (Sep/Oct) + May — last chance before STOP ===
+# Fires #1-4 all 403'd — sandbox IP blocked by Google Flights every attempt.
+# no_improve_streak=4; one more failure triggers STOP (default --stop-after-no-improve 5).
+# Pivoting to the highest-value month coverage: Sep/Oct shoulder + May early-book,
+# with 8 pairs per route (max) to maximise the probability of a hit if env unblocks.
+# Trip lengths: 10d, 14d, 17d, 21d to capture different demand buckets.
 STRATEGY: dict[str, RouteStrategy] = {
     "LHR-BLR": RouteStrategy(
         date_pairs=[
-            ("2026-06-09", "2026-06-23"),   # Jun shoulder, 14d
-            ("2026-07-07", "2026-07-17"),   # Jul, 10d (shorter trip)
-            ("2026-08-04", "2026-08-21"),   # Aug, 17d
-            ("2026-12-01", "2026-12-15"),   # Dec early, 14d (before cutoff)
+            ("2026-09-01", "2026-09-15"),   # Sep shoulder, 14d
+            ("2026-09-08", "2026-09-18"),   # Sep shoulder, 10d
+            ("2026-09-15", "2026-10-02"),   # Sep→Oct overlap, 17d
+            ("2026-10-06", "2026-10-20"),   # Oct shoulder, 14d
+            ("2026-10-13", "2026-11-03"),   # Oct→Nov, 21d
+            ("2026-05-05", "2026-05-19"),   # May early, 14d
+            ("2026-05-12", "2026-05-29"),   # May, 17d
+            ("2026-11-10", "2026-11-24"),   # Nov off-season, 14d
         ],
         max_stops=2,
         notes=(
-            "Iter 3: EXPLORE — rotating to Jun/Jul/Aug/Dec, months not yet probed. "
-            "Fires 1-3 all 403; strategy rotation ensures full month coverage for "
-            "when sandbox IP unblocks. BLR: IndiGo/AI $1500-1800, Gulf $2500-3500."
+            "Iter 4: EXPLORE — Sep/Oct shoulder prime targets + May early-book + Nov. "
+            "Fire #5 is last before STOP (streak=4→5). BLR target: IndiGo/AI $1500-1800, "
+            "Gulf carriers $2500-3500. Max 8 pairs to maximise hit chance if env unblocks."
         ),
     ),
     "LHR-ATL": RouteStrategy(
         date_pairs=[
-            ("2026-06-09", "2026-06-23"),   # Jun, 14d
-            ("2026-07-07", "2026-07-21"),   # Jul, 14d
-            ("2026-08-04", "2026-08-18"),   # Aug, 14d
-            ("2026-12-01", "2026-12-15"),   # Dec early, 14d
+            ("2026-09-01", "2026-09-15"),   # Sep shoulder, 14d
+            ("2026-09-08", "2026-09-18"),   # Sep shoulder, 10d
+            ("2026-09-15", "2026-10-02"),   # Sep→Oct overlap, 17d
+            ("2026-10-06", "2026-10-20"),   # Oct shoulder, 14d
+            ("2026-10-13", "2026-11-03"),   # Oct→Nov, 21d
+            ("2026-05-05", "2026-05-19"),   # May early, 14d
+            ("2026-05-12", "2026-05-29"),   # May, 17d
+            ("2026-11-10", "2026-11-24"),   # Nov off-season, 14d
         ],
         max_stops=2,
         notes=(
-            "Iter 3: EXPLORE — same Jun/Jul/Aug/Dec rotation as BLR. "
-            "ATL target: BA/VS/DL nonstop $3500-5500 or sub-$3500 via European hub."
+            "Iter 4: EXPLORE — Sep/Oct shoulder + May + Nov. ATL target: BA/VS/DL nonstop "
+            "$3500-5500 or sub-$3500 via European hub. max_stops=2 to capture both nonstop "
+            "and one-stop options."
         ),
     ),
     "LHR-LAX": RouteStrategy(
         date_pairs=[
-            ("2026-06-09", "2026-06-23"),   # Jun, 14d
-            ("2026-07-07", "2026-07-28"),   # Jul, 21d (longer trip)
-            ("2026-08-04", "2026-08-18"),   # Aug, 14d
-            ("2026-12-01", "2026-12-15"),   # Dec early, 14d
+            ("2026-09-01", "2026-09-15"),   # Sep shoulder, 14d
+            ("2026-09-08", "2026-09-18"),   # Sep shoulder, 10d
+            ("2026-09-15", "2026-10-02"),   # Sep→Oct overlap, 17d
+            ("2026-10-06", "2026-10-20"),   # Oct shoulder, 14d
+            ("2026-10-13", "2026-11-03"),   # Oct→Nov, 21d
+            ("2026-05-05", "2026-05-19"),   # May early, 14d
+            ("2026-05-12", "2026-05-29"),   # May, 17d
+            ("2026-11-10", "2026-11-24"),   # Nov off-season, 14d
         ],
         max_stops=2,
         notes=(
-            "Iter 3: EXPLORE — Jun/Jul/Aug/Dec rotation. "
-            "LAX target: one-stop via BOS/JFK/ORD/EWR at $3000-4000."
+            "Iter 4: EXPLORE — Sep/Oct shoulder + May + Nov. LAX target: one-stop via "
+            "BOS/JFK/ORD/EWR at $3000-4000; nonstop BA/VS/AA $4500-7000. Sep/Oct "
+            "historically cheapest for transatlantic."
         ),
     ),
 }
