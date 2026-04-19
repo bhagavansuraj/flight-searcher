@@ -121,6 +121,7 @@ def _call_worker(
         headers={
             "content-type": "application/json",
             "authorization": f"Bearer {token}",
+            "user-agent": "flight-searcher-routine/1.0",
         },
     )
     try:
