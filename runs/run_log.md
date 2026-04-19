@@ -41,3 +41,15 @@ iter 4: mean=n/a  LHR-BLR=  n/a  LHR-ATL=  n/a  LHR-LAX=  n/a
   LHR-LAX:   (n=0, err=4)
     notes: Iter 3: EXPLORE — Jun/Jul/Aug/Dec rotation. LAX target: one-stop via BOS/JFK/ORD/EWR at $3000-4000.
   -> reverting (best mean=n/a, no-improve streak=4)
+
+# Resumed 2026-04-19 02:01:48
+
+iter 5: mean=n/a  LHR-BLR=  n/a  LHR-ATL=  n/a  LHR-LAX=  n/a
+  LHR-BLR:   (n=0, err=8)
+    notes: Iter 4: EXPLORE — Sep/Oct shoulder prime targets + May early-book + Nov. Fire #5 is last before STOP (streak=4→5). BLR target: IndiGo/AI $1500-1800, Gulf carriers $2500-3500. Max 8 pairs to maximise hit chance if env unblocks.
+  LHR-ATL:   (n=0, err=8)
+    notes: Iter 4: EXPLORE — Sep/Oct shoulder + May + Nov. ATL target: BA/VS/DL nonstop $3500-5500 or sub-$3500 via European hub. max_stops=2 to capture both nonstop and one-stop options.
+  LHR-LAX:   (n=0, err=8)
+    notes: Iter 4: EXPLORE — Sep/Oct shoulder + May + Nov. LAX target: one-stop via BOS/JFK/ORD/EWR at $3000-4000; nonstop BA/VS/AA $4500-7000. Sep/Oct historically cheapest for transatlantic.
+  -> reverting (best mean=n/a, no-improve streak=5)
+  -> STOP written (streak=5)
