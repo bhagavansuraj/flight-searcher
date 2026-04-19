@@ -1,56 +1,73 @@
-// Proxies POST /search requests to SerpAPI's google_flights engine and
-// returns parsed itineraries in the Python routine's Itinerary schema.
+// Cloudflare Worker — flight-searcher
 //
-// Secrets (set via `wrangler secret put`):
-//   SERPAPI_KEY  — your SerpAPI key
-//   AUTH_TOKEN   — shared bearer token so randos can't drain our SerpAPI quota
+// Cron (0 * * * *) fires scheduled() → runOnce() → autoresearch-style loop:
+//   scrape SerpAPI per route × date_pair, score, keep-or-revert vs persistent
+//   best, then call Claude for the next strategy. State lives in KV.
+//
+// HTTP endpoints (all bearer-auth'd with AUTH_TOKEN except /health):
+//   GET  /health           → liveness
+//   POST /run              → kick a fire now
+//   POST /resume           → clear the STOP flag
+//   GET  /state            → dump current KV state (strategy + state + log)
+//   POST /search           → ad-hoc SerpAPI proxy (single route × date pair)
+//
+// Secrets (wrangler secret put …):
+//   SERPAPI_KEY         — SerpAPI key
+//   AUTH_TOKEN          — bearer token for HTTP endpoints
+//   ANTHROPIC_API_KEY   — Claude key for the next-strategy call
+// Bindings (wrangler.toml):
+//   STATE               — KV namespace
 
-export interface Env {
-  SERPAPI_KEY: string;
-  AUTH_TOKEN: string;
+import { runOnce } from "./orchestrator";
+import { searchRoundTrip } from "./search";
+import {
+  readState,
+  readStrategy,
+  readBestStrategy,
+  readRunLog,
+  writeState,
+} from "./state";
+import type { Cabin, Env } from "./types";
+
+function json(body: any, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
 }
 
-type Cabin = "economy" | "premium-economy" | "business" | "first";
-
-interface SearchReq {
-  origin: string;           // IATA e.g. "LHR"
-  dest: string;             // IATA e.g. "BLR"
-  outbound: string;         // "YYYY-MM-DD"
-  inbound: string;          // "YYYY-MM-DD"
-  cabin?: Cabin;            // default "business"
-  max_stops?: number | null;
+function authed(req: Request, env: Env): boolean {
+  return (req.headers.get("authorization") || "") === `Bearer ${env.AUTH_TOKEN}`;
 }
 
-interface Itinerary {
-  route: string;
-  outbound_date: string;
-  return_date: string;
-  cabin: string;
-  price_usd: number;
-  stops: number;
-  duration_min: number;
-  airlines: string[];
-  dep_time: string;
-  arr_time: string;
-  day_shift: string;
-  layover_airports: string[];
-  raw_label: string;
-}
-
-const CABIN_TO_SERPAPI: Record<Cabin, number> = {
-  "economy": 1,
-  "premium-economy": 2,
-  "business": 3,
-  "first": 4,
-};
-
-// max_stops (routine) → SerpAPI stops param (0=any, 1=nonstop, 2=≤1, 3=≤2)
-function stopsToSerpApi(max: number | null | undefined): number {
-  if (max === null || max === undefined) return 0;
-  if (max === 0) return 1;
-  if (max === 1) return 2;
-  if (max === 2) return 3;
-  return 0;
+async function handleSearch(req: Request, env: Env): Promise<Response> {
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+  const missing = ["origin", "dest", "outbound", "inbound"].filter((k) => !body[k]);
+  if (missing.length) return json({ error: "missing_fields", fields: missing }, 400);
+  const cabin: Cabin = body.cabin || "business";
+  const maxStops: number =
+    typeof body.max_stops === "number" && [0, 1, 2].includes(body.max_stops)
+      ? body.max_stops
+      : 2;
+  try {
+    const itins = await searchRoundTrip(
+      env,
+      body.origin,
+      body.dest,
+      body.outbound,
+      body.inbound,
+      cabin,
+      maxStops,
+    );
+    return json({ route: `${body.origin}-${body.dest}`, n: itins.length, itineraries: itins });
+  } catch (e) {
+    return json({ error: String(e) }, 502);
+  }
 }
 
 export default {
@@ -61,148 +78,47 @@ export default {
       return json({ ok: true, ts: Date.now() });
     }
 
-    if (req.method !== "POST" || url.pathname !== "/search") {
-      return new Response("Not found", { status: 404 });
+    if (!authed(req, env)) return new Response("Unauthorized", { status: 401 });
+
+    if (req.method === "GET" && url.pathname === "/state") {
+      const [state, strategy, best, log] = await Promise.all([
+        readState(env),
+        readStrategy(env),
+        readBestStrategy(env),
+        readRunLog(env),
+      ]);
+      return json({ state, strategy, best_strategy: best, run_log: log });
     }
 
-    const auth = req.headers.get("authorization") || "";
-    if (auth !== `Bearer ${env.AUTH_TOKEN}`) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-
-    let body: SearchReq;
-    try {
-      body = (await req.json()) as SearchReq;
-    } catch {
-      return json({ error: "invalid_json" }, 400);
-    }
-
-    const missing = ["origin", "dest", "outbound", "inbound"].filter(
-      (k) => !(body as any)[k]
-    );
-    if (missing.length) {
-      return json({ error: "missing_fields", fields: missing }, 400);
-    }
-
-    const cabin: Cabin = body.cabin || "business";
-
-    const params = new URLSearchParams({
-      engine: "google_flights",
-      departure_id: body.origin,
-      arrival_id: body.dest,
-      outbound_date: body.outbound,
-      return_date: body.inbound,
-      type: "1", // round-trip
-      travel_class: String(CABIN_TO_SERPAPI[cabin] ?? 3),
-      adults: "1",
-      currency: "USD",
-      hl: "en",
-      stops: String(stopsToSerpApi(body.max_stops ?? null)),
-      api_key: env.SERPAPI_KEY,
-    });
-
-    const serpUrl = "https://serpapi.com/search?" + params.toString();
-    const serpRes = await fetch(serpUrl);
-    if (!serpRes.ok) {
-      const text = await serpRes.text();
-      return json(
-        { error: "serpapi_error", status: serpRes.status, body: text.slice(0, 400) },
-        502
-      );
-    }
-
-    const data = (await serpRes.json()) as any;
-    if (data.error) {
-      return json({ error: "serpapi_error", detail: data.error }, 502);
-    }
-
-    const itineraries = parseItineraries(data, body, cabin);
-    return json({
-      route: `${body.origin}-${body.dest}`,
-      n: itineraries.length,
-      itineraries,
-    });
-  },
-};
-
-function parseItineraries(data: any, req: SearchReq, cabin: Cabin): Itinerary[] {
-  const items = [
-    ...((data.best_flights as any[]) || []),
-    ...((data.other_flights as any[]) || []),
-  ];
-  const route = `${req.origin}-${req.dest}`;
-  const seen = new Set<string>();
-  const out: Itinerary[] = [];
-
-  for (const item of items) {
-    const price = Number(item.price);
-    if (!Number.isFinite(price) || price <= 0) continue;
-
-    const flights: any[] = item.flights || [];
-    if (flights.length === 0) continue;
-
-    const layovers: any[] = item.layovers || [];
-    const stops = layovers.length;
-
-    const airlines: string[] = [];
-    const seenAl = new Set<string>();
-    for (const f of flights) {
-      const al = (f.airline || "").trim();
-      if (al && !seenAl.has(al)) {
-        airlines.push(al);
-        seenAl.add(al);
+    if (req.method === "POST" && url.pathname === "/run") {
+      try {
+        const result = await runOnce(env);
+        return json(result);
+      } catch (e) {
+        return json({ error: String(e) }, 500);
       }
     }
 
-    const depRaw = flights[0]?.departure_airport?.time || "";
-    const arrRaw = flights[flights.length - 1]?.arrival_airport?.time || "";
-    const depTime = formatTime(depRaw);
-    const arrTime = formatTime(arrRaw);
+    if (req.method === "POST" && url.pathname === "/resume") {
+      const state = await readState(env);
+      state.stopped = false;
+      state.no_improve_streak = 0;
+      await writeState(env, state);
+      return json({ ok: true, state });
+    }
 
-    const layoverAirports = layovers.map((lv) => lv.id || lv.name || "");
-    const duration = Number(item.total_duration || 0);
+    if (req.method === "POST" && url.pathname === "/search") {
+      return handleSearch(req, env);
+    }
 
-    const sig = `${price}|${duration}|${airlines.join(",")}|${stops}|${depTime}`;
-    if (seen.has(sig)) continue;
-    seen.add(sig);
+    return new Response("Not found", { status: 404 });
+  },
 
-    out.push({
-      route,
-      outbound_date: req.outbound,
-      return_date: req.inbound,
-      cabin,
-      price_usd: price,
-      stops,
-      duration_min: duration,
-      airlines,
-      dep_time: depTime,
-      arr_time: arrTime,
-      day_shift: "",
-      layover_airports: layoverAirports,
-      raw_label: JSON.stringify({ price, airlines, stops, duration }),
-    });
-  }
-
-  return out;
-}
-
-function formatTime(raw: string): string {
-  // "2026-09-01 08:30" → "8:30AM"
-  if (!raw) return "";
-  const parts = raw.split(" ");
-  if (parts.length < 2) return raw;
-  const [hs, ms] = parts[1].split(":");
-  let h = parseInt(hs, 10);
-  const m = parseInt(ms, 10);
-  if (!Number.isFinite(h) || !Number.isFinite(m)) return raw;
-  const ampm = h < 12 ? "AM" : "PM";
-  h = h % 12 || 12;
-  return `${h}:${String(m).padStart(2, "0")}${ampm}`;
-}
-
-function json(body: any, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-}
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      runOnce(env)
+        .then((r) => console.log("fire:", JSON.stringify({ fire: r.fire, kept: r.kept, mean: r.mean, stopped: r.stopped })))
+        .catch((e) => console.error("fire failed:", String(e))),
+    );
+  },
+};

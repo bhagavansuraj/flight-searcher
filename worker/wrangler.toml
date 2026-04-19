@@ -3,7 +3,20 @@ main = "src/index.ts"
 compatibility_date = "2026-04-01"
 workers_dev = true
 
-# Secrets are set out-of-band via `wrangler secret put`:
-#   wrangler secret put SERPAPI_KEY
-#   wrangler secret put AUTH_TOKEN
-# Both are required. Local dev reads them from .dev.vars (gitignored).
+# Hourly cron trigger — fires scheduled() → runOnce().
+[triggers]
+crons = ["0 * * * *"]
+
+# KV namespace holding the routine's persistent state:
+#   strategy, best_strategy, state, run_log
+# Create with:  npx wrangler kv namespace create STATE
+# then paste the returned id below.
+[[kv_namespaces]]
+binding = "STATE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Secrets (set via `wrangler secret put`):
+#   SERPAPI_KEY        — SerpAPI key
+#   AUTH_TOKEN         — bearer token for HTTP endpoints
+#   ANTHROPIC_API_KEY  — Claude key for the next-strategy call
+# Local dev reads them from .dev.vars (gitignored).

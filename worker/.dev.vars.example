@@ -1,2 +1,3 @@
 SERPAPI_KEY=your-serpapi-key-here
 AUTH_TOKEN=any-long-random-string-shared-with-the-routine
+ANTHROPIC_API_KEY=sk-ant-api03-...
