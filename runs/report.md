@@ -6,4 +6,4 @@ _No best yet._
 ---
 ## Recent iterations
 
-- iter 2: mean=n/a  LHR-BLR=  n/a  LHR-ATL=  n/a  LHR-LAX=  n/a
+- iter 3: mean=n/a  LHR-BLR=  n/a  LHR-ATL=  n/a  LHR-LAX=  n/a

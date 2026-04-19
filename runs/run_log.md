@@ -19,3 +19,14 @@ iter 2: mean=n/a  LHR-BLR=  n/a  LHR-ATL=  n/a  LHR-LAX=  n/a
   LHR-LAX:   (n=0, err=8)
     notes: Iter 1: LAX nonstop BA/VS/AA usually $4500-7000; one-stop via BOS/JFK/ORD/EWR sometimes $3000-4000. Shoulder seasons first.
   -> reverting (best mean=n/a, no-improve streak=2)
+
+# Resumed 2026-04-19 00:26:35
+
+iter 3: mean=n/a  LHR-BLR=  n/a  LHR-ATL=  n/a  LHR-LAX=  n/a
+  LHR-BLR:   (n=0, err=4)
+    notes: Iter 2: Google Flights 403 both fires — sandbox IP blocked. Minimal 4-pair probe; shoulder seasons Sep/Oct/May prioritised. No change in strategy will fix this; env needs a non-blocked IP.
+  LHR-ATL:   (n=0, err=4)
+    notes: Iter 2: same sandbox-blocked situation. ATL nonstop BA/VS/DL. Keeping shoulder dates ready for when scraping unblocks.
+  LHR-LAX:   (n=0, err=4)
+    notes: Iter 2: same sandbox-blocked situation. LAX one-stop via BOS/JFK/ORD/EWR target $3000-4000. Ready for unblocked env.
+  -> reverting (best mean=n/a, no-improve streak=3)
