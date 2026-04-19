@@ -22,63 +22,52 @@ class RouteStrategy:
     notes: str = ""
 
 
-# === ITERATION 1: shoulder-season focus with fresh dates =====================
-# Fire #1 had all 8 scrapes fail (err=8 per route) — likely transient network
-# issues. Retrying with fresh date pairs, focusing on shoulder seasons (May,
-# Sep, Oct) and mixing trip lengths (10, 14, 17 days). Still max_stops=2 for
-# maximum coverage. Re-use some Iter 0 dates + add new ones.
+# === ITERATION 2: sandbox blocked — minimal probe, await env fix ==============
+# Fires #1 and #2 both failed with Google Flights 403 after 4 retries.
+# Root cause: sandbox IP is blocked by Google Flights. The primp impersonation
+# warning ("chrome_13x does not exist, using 'random'") may also reduce success.
+# Keeping 4 pairs per route (minimal footprint) targeting best shoulder seasons
+# in case the environment changes (proxy, residential IP, etc.).
+# Next step for user: run from a non-datacenter IP or add a proxy to search_lib.
 STRATEGY: dict[str, RouteStrategy] = {
     "LHR-BLR": RouteStrategy(
         date_pairs=[
-            ("2026-05-05", "2026-05-19"),   # early May, 14d
-            ("2026-05-19", "2026-05-29"),   # late May, 10d
-            ("2026-09-01", "2026-09-15"),   # early Sep, 14d
-            ("2026-09-22", "2026-10-06"),   # late Sep, 14d
-            ("2026-10-06", "2026-10-23"),   # Oct, 17d
-            ("2026-11-03", "2026-11-17"),   # early Nov, 14d
-            ("2026-12-05", "2026-12-19"),   # early Dec, 14d
-            ("2026-06-02", "2026-06-16"),   # Jun, 14d
+            ("2026-09-08", "2026-09-22"),   # Sep shoulder, 14d
+            ("2026-10-06", "2026-10-20"),   # Oct shoulder, 14d
+            ("2026-05-12", "2026-05-26"),   # May shoulder, 14d
+            ("2026-11-10", "2026-11-24"),   # Nov off-peak, 14d
         ],
         max_stops=2,
         notes=(
-            "Iter 1: fire #1 all-errors, retrying with fresh date pairs. "
-            "Shoulder focus: May, Sep-Oct. Mixed trip lengths (10/14/17d). "
-            "If errors persist again, scraper is blocked in this sandbox."
+            "Iter 2: Google Flights 403 both fires — sandbox IP blocked. "
+            "Minimal 4-pair probe; shoulder seasons Sep/Oct/May prioritised. "
+            "No change in strategy will fix this; env needs a non-blocked IP."
         ),
     ),
     "LHR-ATL": RouteStrategy(
         date_pairs=[
-            ("2026-05-05", "2026-05-19"),   # early May, 14d
-            ("2026-05-19", "2026-05-29"),   # late May, 10d
-            ("2026-09-01", "2026-09-15"),   # early Sep, 14d
-            ("2026-09-22", "2026-10-06"),   # late Sep, 14d
-            ("2026-10-06", "2026-10-23"),   # Oct, 17d
-            ("2026-11-03", "2026-11-17"),   # early Nov, 14d
-            ("2026-12-05", "2026-12-19"),   # early Dec, 14d
-            ("2026-06-02", "2026-06-16"),   # Jun, 14d
+            ("2026-09-08", "2026-09-22"),
+            ("2026-10-06", "2026-10-20"),
+            ("2026-05-12", "2026-05-26"),
+            ("2026-11-10", "2026-11-24"),
         ],
         max_stops=2,
         notes=(
-            "Iter 1: same approach as BLR. ATL is mostly nonstop BA/VS/DL; "
-            "shoulder seasons (May, Sep-Oct) expected cheapest. "
-            "Sub-$3500 with European connection is a real find."
+            "Iter 2: same sandbox-blocked situation. ATL nonstop BA/VS/DL. "
+            "Keeping shoulder dates ready for when scraping unblocks."
         ),
     ),
     "LHR-LAX": RouteStrategy(
         date_pairs=[
-            ("2026-05-05", "2026-05-19"),   # early May, 14d
-            ("2026-05-19", "2026-05-29"),   # late May, 10d
-            ("2026-09-01", "2026-09-15"),   # early Sep, 14d
-            ("2026-09-22", "2026-10-06"),   # late Sep, 14d
-            ("2026-10-06", "2026-10-23"),   # Oct, 17d
-            ("2026-11-03", "2026-11-17"),   # early Nov, 14d
-            ("2026-12-05", "2026-12-19"),   # early Dec, 14d
-            ("2026-06-02", "2026-06-16"),   # Jun, 14d
+            ("2026-09-08", "2026-09-22"),
+            ("2026-10-06", "2026-10-20"),
+            ("2026-05-12", "2026-05-26"),
+            ("2026-11-10", "2026-11-24"),
         ],
         max_stops=2,
         notes=(
-            "Iter 1: LAX nonstop BA/VS/AA usually $4500-7000; one-stop via "
-            "BOS/JFK/ORD/EWR sometimes $3000-4000. Shoulder seasons first."
+            "Iter 2: same sandbox-blocked situation. LAX one-stop via "
+            "BOS/JFK/ORD/EWR target $3000-4000. Ready for unblocked env."
         ),
     ),
 }
