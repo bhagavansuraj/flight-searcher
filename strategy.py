@@ -22,10 +22,12 @@ class RouteStrategy:
     notes: str = ""
 
 
-# === ITERATION 0: broad monthly sweep, May–Dec 2026 ===
-# Baseline coverage: one 14-day pair per month across the 8-month window.
-# Goal is to find which months are cheapest per route so iter 1+ can
-# densify around the winners.
+# === ITERATION 1: retry baseline monthly sweep, May–Dec 2026 ===
+# Fire #1 returned 0 results (err=8 per route) due to Cloudflare Worker
+# returning HTTP 403 "Host not in allowlist" — the Worker blocked the
+# Anthropic cloud sandbox IP. This is a Worker/infra issue, not a strategy
+# issue. Retrying identical date pairs next fire; if Worker is fixed we
+# get the first-ever scored pool and can start exploiting.
 _BASELINE_PAIRS: list[tuple[str, str]] = [
     ("2026-05-05", "2026-05-19"),
     ("2026-06-02", "2026-06-16"),
@@ -41,17 +43,20 @@ STRATEGY: dict[str, RouteStrategy] = {
     "LHR-BLR": RouteStrategy(
         date_pairs=list(_BASELINE_PAIRS),
         max_stops=2,
-        notes="Iter 0: EXPLORE — monthly baseline sweep, 14d trips. Looking for the "
-              "cheapest month on each route before densifying in later fires.",
+        notes="Iter 1: EXPLORE — retrying monthly baseline sweep (fire #1 all errors, "
+              "Worker 403 'Host not in allowlist'). No data yet; same 14d pairs, "
+              "looking for cheapest month per route.",
     ),
     "LHR-ATL": RouteStrategy(
         date_pairs=list(_BASELINE_PAIRS),
         max_stops=2,
-        notes="Iter 0: EXPLORE — monthly baseline sweep, 14d trips.",
+        notes="Iter 1: EXPLORE — retrying monthly baseline sweep (fire #1 all errors, "
+              "Worker 403). No data yet.",
     ),
     "LHR-LAX": RouteStrategy(
         date_pairs=list(_BASELINE_PAIRS),
         max_stops=2,
-        notes="Iter 0: EXPLORE — monthly baseline sweep, 14d trips.",
+        notes="Iter 1: EXPLORE — retrying monthly baseline sweep (fire #1 all errors, "
+              "Worker 403). No data yet.",
     ),
 }
