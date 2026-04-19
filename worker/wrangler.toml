@@ -1,0 +1,9 @@
+name = "flight-searcher-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+workers_dev = true
+
+# Secrets are set out-of-band via `wrangler secret put`:
+#   wrangler secret put SERPAPI_KEY
+#   wrangler secret put AUTH_TOKEN
+# Both are required. Local dev reads them from .dev.vars (gitignored).

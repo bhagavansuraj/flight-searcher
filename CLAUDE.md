@@ -131,15 +131,38 @@ flight-searcher/
 - Python 3.12+ is provided by `uv` from the project's virtualenv.
 - No `ANTHROPIC_API_KEY` needed — you (the routine) are the LLM. The
   orchestrator is invoked with `--no-llm` so it never makes its own Sonnet call.
+- **Required env vars (set inline on the orchestrator command):**
+  - `FLIGHT_WORKER_URL` — the deployed Cloudflare Worker URL, e.g.
+    `https://flight-searcher-proxy.<sub>.workers.dev`
+  - `FLIGHT_WORKER_TOKEN` — shared bearer token matching the Worker's
+    `AUTH_TOKEN` secret
 - Cache TTL defaults to 30 min — repeated queries within that window serve
   cached results. Override with `--cache-ttl SECONDS` if needed.
 - Stop condition defaults to 5 consecutive no-improvement fires
   (`--stop-after-no-improve`). The user can override per-fire.
 
+## Architecture (how data actually flows)
+
+The routine (this Claude) does NOT scrape Google directly. Anthropic cloud
+sandbox IPs are blocked by Google Flights. Instead:
+
+```
+routine (Anthropic cloud)
+  └─ orchestrator.py
+       └─ search_lib._call_worker()  →  POST /search (bearer auth)
+             └─ Cloudflare Worker (flight-searcher-proxy)
+                   └─ SerpAPI google_flights engine
+                         └─ Google Flights
+```
+
+The Worker lives in `worker/` (separate `wrangler.toml` project). It holds
+the `SERPAPI_KEY` secret. Deploy/update separately from the Python routine.
+See `worker/README` notes in `wrangler.toml` comments.
+
 ## Quick commands
 
 ```bash
-# Standard fire (use this each time):
+# Standard fire (env vars come from the trigger config, not you):
 uv run python orchestrator.py --iters 1 --no-llm --append-log
 
 # Force a fresh scrape (bypass cache, e.g. when checking price movement):
