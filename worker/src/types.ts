@@ -16,12 +16,12 @@ export interface Itinerary {
   raw_label: string;
 }
 
+// Kept for backwards compat (pre-agent-harness strategy format in KV).
 export interface RouteStrategy {
   date_pairs: [string, string][];
   max_stops: number;
   notes: string;
 }
-
 export type Strategy = Record<string, RouteStrategy>;
 
 export interface State {
@@ -30,6 +30,7 @@ export interface State {
   no_improve_streak: number;
   best_summary_per_route: Record<string, string>;
   stopped: boolean;
+  running?: boolean; // true while a fire is in progress
 }
 
 export interface RouteOutcome {
@@ -45,8 +46,13 @@ export interface RunLogEntry {
   kept: boolean;
   mean: number | null;
   per_route: Record<string, RouteOutcome>;
-  strategy_notes: Record<string, string>;
   llm_note: string;
+  // Legacy (pre-agent harness)
+  strategy_notes?: Record<string, string>;
+  // Agent harness fields (fire >= agent migration)
+  agent_notes?: string;
+  agent_searches?: number;
+  agent_turns?: number;
 }
 
 export interface Env {

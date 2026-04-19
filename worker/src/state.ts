@@ -1,8 +1,8 @@
-import type { Env, State, Strategy, RunLogEntry } from "./types";
+import type { Env, State, RunLogEntry } from "./types";
 
 const K_STATE = "state";
-const K_STRATEGY = "strategy";
-const K_BEST_STRATEGY = "best_strategy";
+const K_AGENT_NOTES = "agent_notes";
+const K_BEST_AGENT_NOTES = "best_agent_notes";
 const K_RUN_LOG = "run_log";
 const RUN_LOG_CAP = 50;
 
@@ -15,6 +15,7 @@ export async function readState(env: Env): Promise<State> {
       no_improve_streak: 0,
       best_summary_per_route: {},
       stopped: false,
+      running: false,
     };
   }
   return JSON.parse(raw);
@@ -24,22 +25,20 @@ export async function writeState(env: Env, s: State): Promise<void> {
   await env.STATE.put(K_STATE, JSON.stringify(s));
 }
 
-export async function readStrategy(env: Env): Promise<Strategy | null> {
-  const raw = await env.STATE.get(K_STRATEGY);
-  return raw ? JSON.parse(raw) : null;
+export async function readAgentNotes(env: Env): Promise<string> {
+  return (await env.STATE.get(K_AGENT_NOTES)) ?? "";
 }
 
-export async function writeStrategy(env: Env, s: Strategy): Promise<void> {
-  await env.STATE.put(K_STRATEGY, JSON.stringify(s));
+export async function writeAgentNotes(env: Env, notes: string): Promise<void> {
+  await env.STATE.put(K_AGENT_NOTES, notes);
 }
 
-export async function readBestStrategy(env: Env): Promise<Strategy | null> {
-  const raw = await env.STATE.get(K_BEST_STRATEGY);
-  return raw ? JSON.parse(raw) : null;
+export async function readBestAgentNotes(env: Env): Promise<string> {
+  return (await env.STATE.get(K_BEST_AGENT_NOTES)) ?? "";
 }
 
-export async function writeBestStrategy(env: Env, s: Strategy): Promise<void> {
-  await env.STATE.put(K_BEST_STRATEGY, JSON.stringify(s));
+export async function writeBestAgentNotes(env: Env, notes: string): Promise<void> {
+  await env.STATE.put(K_BEST_AGENT_NOTES, notes);
 }
 
 export async function readRunLog(env: Env): Promise<RunLogEntry[]> {

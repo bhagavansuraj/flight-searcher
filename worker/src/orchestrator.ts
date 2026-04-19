@@ -1,18 +1,16 @@
-import { ROUTES, STOP_AFTER_NO_IMPROVE, DATE_WINDOW_START, DATE_WINDOW_END } from "./preferences";
-import { searchRoundTrip } from "./search";
+import { ROUTES, STOP_AFTER_NO_IMPROVE } from "./preferences";
 import { scoreItineraries, summarize } from "./score";
-import { callClaude } from "./llm";
+import { runAgentLoop } from "./llm";
 import {
   readState,
   writeState,
-  readStrategy,
-  writeStrategy,
-  readBestStrategy,
-  writeBestStrategy,
+  readAgentNotes,
+  writeAgentNotes,
+  writeBestAgentNotes,
   readRunLog,
   appendRunLog,
 } from "./state";
-import type { Env, Itinerary, RouteOutcome, RouteStrategy, Strategy } from "./types";
+import type { Env, RouteOutcome } from "./types";
 
 export interface RunResult {
   stopped: boolean;
@@ -20,79 +18,13 @@ export interface RunResult {
   fire: number;
   kept: boolean;
   mean: number | null;
+  searches: number;
+  turns: number;
 }
 
-function baselineStrategy(): Strategy {
-  const pairs: [string, string][] = [
-    ["2026-05-05", "2026-05-19"],
-    ["2026-06-02", "2026-06-16"],
-    ["2026-07-07", "2026-07-21"],
-    ["2026-08-04", "2026-08-18"],
-    ["2026-09-01", "2026-09-15"],
-    ["2026-10-06", "2026-10-20"],
-    ["2026-11-03", "2026-11-17"],
-    ["2026-12-01", "2026-12-15"],
-  ];
-  const note = "Iter 0: EXPLORE — monthly baseline sweep, 14d trips.";
-  const rs = (): RouteStrategy => ({
-    date_pairs: pairs.map((p) => [p[0], p[1]] as [string, string]),
-    max_stops: 2,
-    notes: note,
-  });
-  return { "LHR-BLR": rs(), "LHR-ATL": rs(), "LHR-LAX": rs() };
-}
-
-function isValidDate(d: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
-  return d >= DATE_WINDOW_START && d <= DATE_WINDOW_END;
-}
-
-function validateStrategy(s: Strategy): void {
-  const want = Object.keys(ROUTES);
-  for (const r of want) {
-    const rs = s[r];
-    if (!rs) throw new Error(`missing route ${r}`);
-    if (!Array.isArray(rs.date_pairs) || rs.date_pairs.length === 0 || rs.date_pairs.length > 8) {
-      throw new Error(`${r}: date_pairs must be 1..8 (got ${rs.date_pairs?.length})`);
-    }
-    for (const pair of rs.date_pairs) {
-      if (!Array.isArray(pair) || pair.length !== 2) throw new Error(`${r}: bad pair shape`);
-      const [a, b] = pair;
-      if (!isValidDate(a) || !isValidDate(b)) {
-        throw new Error(`${r}: date pair ${a}/${b} outside ${DATE_WINDOW_START}..${DATE_WINDOW_END}`);
-      }
-      if (a > b) throw new Error(`${r}: outbound ${a} after return ${b}`);
-    }
-    if (![0, 1, 2].includes(rs.max_stops)) {
-      throw new Error(`${r}: max_stops must be 0/1/2 (got ${rs.max_stops})`);
-    }
-  }
-}
-
-async function scrapeRoute(
-  env: Env,
-  route: string,
-  rs: RouteStrategy,
-): Promise<{ pool: Itinerary[]; errors: string[] }> {
-  const [origin, dest] = ROUTES[route];
-  const results = await Promise.allSettled(
-    rs.date_pairs.map(([ob, ib]) =>
-      searchRoundTrip(env, origin, dest, ob, ib, "business", rs.max_stops),
-    ),
-  );
-  const pool: Itinerary[] = [];
-  const errors: string[] = [];
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    const [ob, ib] = rs.date_pairs[i];
-    if (r.status === "fulfilled") pool.push(...r.value);
-    else errors.push(`${ob}→${ib}: ${String(r.reason).slice(0, 140)}`);
-  }
-  return { pool, errors };
-}
-
-export async function runOnce(env: Env): Promise<RunResult> {
+export async function runAgent(env: Env): Promise<RunResult> {
   const state = await readState(env);
+
   if (state.stopped) {
     return {
       stopped: true,
@@ -100,37 +32,57 @@ export async function runOnce(env: Env): Promise<RunResult> {
       fire: state.fire_count,
       kept: false,
       mean: null,
+      searches: 0,
+      turns: 0,
     };
   }
 
-  let strategy = await readStrategy(env);
-  if (!strategy) {
-    strategy = baselineStrategy();
-    await writeStrategy(env, strategy);
+  // Mark fire as in-progress so the TUI can show a spinner.
+  state.running = true;
+  await writeState(env, state);
+
+  const [agentNotes, recentLog] = await Promise.all([readAgentNotes(env), readRunLog(env)]);
+
+  // Run the agent loop.
+  let loopResult;
+  try {
+    loopResult = await runAgentLoop(env, state, agentNotes, recentLog);
+  } catch (e) {
+    state.running = false;
+    state.fire_count += 1;
+    state.no_improve_streak += 1;
+    await writeState(env, state);
+    const errMsg = `Agent loop failed: ${String(e).slice(0, 200)}`;
+    await appendRunLog(env, {
+      fire: state.fire_count,
+      ts: new Date().toISOString(),
+      kept: false,
+      mean: null,
+      per_route: {},
+      llm_note: errMsg,
+    });
+    return { stopped: false, summary: errMsg, fire: state.fire_count, kept: false, mean: null, searches: 0, turns: 0 };
   }
 
-  // Scrape all 3 routes in parallel.
-  const routeNames = Object.keys(ROUTES);
-  const scrapes = await Promise.all(
-    routeNames.map((r) => scrapeRoute(env, r, strategy![r])),
-  );
+  const { session, turns } = loopResult;
 
-  // Score per route.
+  // Score each route's accumulated pool.
+  const routeNames = Object.keys(ROUTES);
   const perRouteBest: Record<string, RouteOutcome> = {};
   const bestScores: number[] = [];
-  for (let i = 0; i < routeNames.length; i++) {
-    const route = routeNames[i];
-    const { pool, errors } = scrapes[i];
+
+  for (const route of routeNames) {
+    const pool = session.pool[route] ?? [];
     const scored = scoreItineraries(pool);
     if (scored.length === 0) {
-      perRouteBest[route] = { best_score: null, best_summary: null, n: 0, errors };
+      perRouteBest[route] = { best_score: null, best_summary: null, n: 0, errors: [] };
     } else {
       const [s, it] = scored[0];
       perRouteBest[route] = {
         best_score: s,
         best_summary: summarize(it),
         n: scored.length,
-        errors,
+        errors: [],
       };
       bestScores.push(s);
     }
@@ -143,7 +95,6 @@ export async function runOnce(env: Env): Promise<RunResult> {
 
   // Keep-or-revert.
   let kept = false;
-  let strategyForNextFire = strategy;
   if (mean !== null) {
     if (state.best_mean === null || mean < state.best_mean) {
       state.best_mean = mean;
@@ -151,34 +102,35 @@ export async function runOnce(env: Env): Promise<RunResult> {
       state.best_summary_per_route = Object.fromEntries(
         Object.entries(perRouteBest).map(([r, v]) => [r, v.best_summary ?? ""]),
       );
-      await writeBestStrategy(env, strategy);
       kept = true;
+      // Persist the winning agent's notes as the all-time best notes.
+      if (session.doneNotes) await writeBestAgentNotes(env, session.doneNotes);
     } else {
       state.no_improve_streak += 1;
-      const best = await readBestStrategy(env);
-      if (best) strategyForNextFire = best;
     }
   } else {
     state.no_improve_streak += 1;
   }
-  state.fire_count += 1;
 
-  // Build summary text for the LLM + caller.
-  const lines: string[] = [];
-  lines.push(
-    `Fire #${state.fire_count}: kept=${kept} mean=${mean === null ? "n/a" : mean.toFixed(3)} streak=${state.no_improve_streak}`,
-  );
+  state.fire_count += 1;
+  state.running = false;
+
+  // Persist agent notes for next fire.
+  if (session.doneNotes) await writeAgentNotes(env, session.doneNotes);
+
+  // Build summary.
+  const lines: string[] = [
+    `Fire #${state.fire_count}: kept=${kept} mean=${mean === null ? "n/a" : mean.toFixed(4)} streak=${state.no_improve_streak} searches=${session.searchesUsed} turns=${turns}`,
+  ];
   for (const route of routeNames) {
     const r = perRouteBest[route];
     if (r.best_summary) {
       lines.push(`  ${route} (pool=${r.n}): ${r.best_summary}`);
     } else {
-      lines.push(`  ${route}: no results (errors=${r.errors.length})`);
-    }
-    if (r.errors.length) {
-      lines.push(`    errors: ${r.errors.slice(0, 2).join("; ")}`);
+      lines.push(`  ${route}: no results`);
     }
   }
+  if (session.doneSummary) lines.push(`  agent: ${session.doneSummary}`);
   const summaryText = lines.join("\n");
 
   // Stop check.
@@ -191,38 +143,12 @@ export async function runOnce(env: Env): Promise<RunResult> {
       kept,
       mean,
       per_route: perRouteBest,
-      strategy_notes: Object.fromEntries(
-        Object.entries(strategy).map(([r, s]) => [r, s.notes]),
-      ),
       llm_note: "STOP — no-improve streak hit threshold.",
+      agent_notes: session.doneNotes,
+      agent_searches: session.searchesUsed,
+      agent_turns: turns,
     });
-    return {
-      stopped: true,
-      summary: summaryText + "\nSTOPPED.",
-      fire: state.fire_count,
-      kept,
-      mean,
-    };
-  }
-
-  // Ask LLM for next strategy.
-  const recentLog = await readRunLog(env);
-  let llmNote = "";
-  try {
-    const { strategy: nextStrategy, note } = await callClaude(
-      env,
-      state,
-      strategyForNextFire,
-      summaryText,
-      recentLog,
-    );
-    validateStrategy(nextStrategy);
-    await writeStrategy(env, nextStrategy);
-    llmNote = note;
-  } catch (e) {
-    // LLM failed — keep strategyForNextFire (reverted-best or current) for next fire.
-    await writeStrategy(env, strategyForNextFire);
-    llmNote = `LLM call failed: ${String(e).slice(0, 160)}`;
+    return { stopped: true, summary: summaryText + "\nSTOPPED.", fire: state.fire_count, kept, mean, searches: session.searchesUsed, turns };
   }
 
   await writeState(env, state);
@@ -232,17 +158,11 @@ export async function runOnce(env: Env): Promise<RunResult> {
     kept,
     mean,
     per_route: perRouteBest,
-    strategy_notes: Object.fromEntries(
-      Object.entries(strategy).map(([r, s]) => [r, s.notes]),
-    ),
-    llm_note: llmNote,
+    llm_note: session.doneSummary || "(no done() summary)",
+    agent_notes: session.doneNotes,
+    agent_searches: session.searchesUsed,
+    agent_turns: turns,
   });
 
-  return {
-    stopped: false,
-    summary: summaryText + `\nnext: ${llmNote}`,
-    fire: state.fire_count,
-    kept,
-    mean,
-  };
+  return { stopped: false, summary: summaryText, fire: state.fire_count, kept, mean, searches: session.searchesUsed, turns };
 }

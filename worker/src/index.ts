@@ -1,31 +1,27 @@
-// Cloudflare Worker — flight-searcher
+// Cloudflare Worker — flight-searcher agent harness
 //
-// Cron (0 * * * *) fires scheduled() → runOnce() → autoresearch-style loop:
-//   scrape SerpAPI per route × date_pair, score, keep-or-revert vs persistent
-//   best, then call Claude for the next strategy. State lives in KV.
+// Cron (0 * * * *): scheduled() → runAgent() → multi-turn Claude loop that
+//   calls search_flights / get_best / get_history / done tools, then scores
+//   the accumulated pool and keep-or-reverts vs persistent best. State in KV.
 //
 // HTTP endpoints (all bearer-auth'd with AUTH_TOKEN except /health):
-//   GET  /health           → liveness
-//   POST /run              → kick a fire now
-//   POST /resume           → clear the STOP flag
-//   GET  /state            → dump current KV state (strategy + state + log)
-//   POST /search           → ad-hoc SerpAPI proxy (single route × date pair)
+//   GET  /health    → liveness
+//   POST /run       → kick a fire (202 async; poll /state for results)
+//   POST /resume    → clear the STOP flag + reset streak
+//   GET  /state     → dump KV state (state + agent_notes + run_log)
+//   POST /search    → ad-hoc SerpAPI proxy (single route × date pair)
 //
-// Secrets (wrangler secret put …):
-//   SERPAPI_KEY         — SerpAPI key
-//   AUTH_TOKEN          — bearer token for HTTP endpoints
-//   ANTHROPIC_API_KEY   — Claude key for the next-strategy call
-// Bindings (wrangler.toml):
-//   STATE               — KV namespace
+// Secrets: SERPAPI_KEY, AUTH_TOKEN, ANTHROPIC_API_KEY
+// Bindings: STATE (KV namespace)
 
-import { runOnce } from "./orchestrator";
+import { runAgent } from "./orchestrator";
 import { searchRoundTrip } from "./search";
 import {
   readState,
-  readStrategy,
-  readBestStrategy,
-  readRunLog,
   writeState,
+  readAgentNotes,
+  readBestAgentNotes,
+  readRunLog,
 } from "./state";
 import type { Cabin, Env } from "./types";
 
@@ -56,13 +52,7 @@ async function handleSearch(req: Request, env: Env): Promise<Response> {
       : 2;
   try {
     const itins = await searchRoundTrip(
-      env,
-      body.origin,
-      body.dest,
-      body.outbound,
-      body.inbound,
-      cabin,
-      maxStops,
+      env, body.origin, body.dest, body.outbound, body.inbound, cabin, maxStops,
     );
     return json({ route: `${body.origin}-${body.dest}`, n: itins.length, itineraries: itins });
   } catch (e) {
@@ -71,7 +61,7 @@ async function handleSearch(req: Request, env: Env): Promise<Response> {
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
 
     if (req.method === "GET" && url.pathname === "/health") {
@@ -81,28 +71,34 @@ export default {
     if (!authed(req, env)) return new Response("Unauthorized", { status: 401 });
 
     if (req.method === "GET" && url.pathname === "/state") {
-      const [state, strategy, best, log] = await Promise.all([
+      const [state, agentNotes, bestNotes, log] = await Promise.all([
         readState(env),
-        readStrategy(env),
-        readBestStrategy(env),
+        readAgentNotes(env),
+        readBestAgentNotes(env),
         readRunLog(env),
       ]);
-      return json({ state, strategy, best_strategy: best, run_log: log });
+      return json({ state, agent_notes: agentNotes, best_agent_notes: bestNotes, run_log: log });
     }
 
     if (req.method === "POST" && url.pathname === "/run") {
-      try {
-        const result = await runOnce(env);
-        return json(result);
-      } catch (e) {
-        return json({ error: String(e) }, 500);
+      const state = await readState(env);
+      if (state.running) {
+        return json({ ok: false, message: "A fire is already in progress." }, 409);
       }
+      // Kick fire async — returns immediately; poll /state for completion.
+      ctx.waitUntil(
+        runAgent(env)
+          .then((r) => console.log("fire:", JSON.stringify({ fire: r.fire, kept: r.kept, mean: r.mean, searches: r.searches, turns: r.turns })))
+          .catch((e) => console.error("fire failed:", String(e))),
+      );
+      return json({ ok: true, message: "fire started", fire: state.fire_count + 1 }, 202);
     }
 
     if (req.method === "POST" && url.pathname === "/resume") {
       const state = await readState(env);
       state.stopped = false;
       state.no_improve_streak = 0;
+      state.running = false;
       await writeState(env, state);
       return json({ ok: true, state });
     }
@@ -116,8 +112,8 @@ export default {
 
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
-      runOnce(env)
-        .then((r) => console.log("fire:", JSON.stringify({ fire: r.fire, kept: r.kept, mean: r.mean, stopped: r.stopped })))
+      runAgent(env)
+        .then((r) => console.log("fire:", JSON.stringify({ fire: r.fire, kept: r.kept, mean: r.mean, searches: r.searches, turns: r.turns, stopped: r.stopped })))
         .catch((e) => console.error("fire failed:", String(e))),
     );
   },

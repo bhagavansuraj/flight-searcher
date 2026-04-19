@@ -1,102 +1,18 @@
-import { PREFERENCES_PROMPT } from "./preferences";
-import type { Env, RunLogEntry, State, Strategy } from "./types";
+import { AGENT_SYSTEM_PROMPT, BUDGET_NUDGE_AT, MAX_AGENT_CALLS } from "./preferences";
+import { TOOL_DEFINITIONS, dispatchTool, newSession } from "./tools";
+import type { AgentSession } from "./tools";
+import type { Env, Itinerary, RunLogEntry, State } from "./types";
 
-export interface LlmResult {
-  strategy: Strategy;
-  note: string;
+export interface AgentLoopResult {
+  session: AgentSession;
+  turns: number;
 }
 
-const ROUTE_SCHEMA = {
-  type: "object",
-  required: ["date_pairs", "max_stops", "notes"],
-  properties: {
-    date_pairs: {
-      type: "array",
-      minItems: 1,
-      maxItems: 8,
-      items: {
-        type: "array",
-        minItems: 2,
-        maxItems: 2,
-        items: { type: "string", pattern: "^2026-\\d{2}-\\d{2}$" },
-      },
-    },
-    max_stops: { type: "integer", enum: [0, 1, 2] },
-    notes: { type: "string" },
-  },
-};
+// ---------------------------------------------------------------------------
+// Low-level Anthropic call
+// ---------------------------------------------------------------------------
 
-const TOOL = {
-  name: "emit_strategy",
-  description: "Emit the strategy for the next fire.",
-  input_schema: {
-    type: "object",
-    required: ["strategy", "note"],
-    properties: {
-      note: {
-        type: "string",
-        description: "One short sentence: what you learned from the just-ran fire and what the new strategy probes next.",
-      },
-      strategy: {
-        type: "object",
-        required: ["LHR-BLR", "LHR-ATL", "LHR-LAX"],
-        properties: {
-          "LHR-BLR": ROUTE_SCHEMA,
-          "LHR-ATL": ROUTE_SCHEMA,
-          "LHR-LAX": ROUTE_SCHEMA,
-        },
-      },
-    },
-  },
-};
-
-export async function callClaude(
-  env: Env,
-  state: State,
-  currentStrategy: Strategy | null,
-  justRanSummary: string,
-  recentLog: RunLogEntry[],
-): Promise<LlmResult> {
-  const bestPerRoute = Object.entries(state.best_summary_per_route)
-    .map(([r, s]) => `  ${r}: ${s || "(none yet)"}`)
-    .join("\n");
-
-  const recent = recentLog
-    .slice(-10)
-    .map(
-      (e) =>
-        `  #${e.fire} kept=${e.kept} mean=${e.mean === null ? "n/a" : e.mean.toFixed(3)} | ${e.llm_note}`,
-    )
-    .join("\n");
-
-  const userContent = [
-    `Fire #${state.fire_count} just finished. Time to decide the strategy for fire #${state.fire_count + 1}.`,
-    ``,
-    `Persistent best mean: ${state.best_mean === null ? "n/a" : state.best_mean.toFixed(3)} (no-improve streak: ${state.no_improve_streak}).`,
-    `Per-route best summary so far:`,
-    bestPerRoute || "  (nothing yet)",
-    ``,
-    `Just-ran fire result:`,
-    justRanSummary,
-    ``,
-    `Recent fire history (oldest first):`,
-    recent || "  (none)",
-    ``,
-    `The strategy that just ran (base your next moves on this — exploit winners, explore gaps):`,
-    currentStrategy ? JSON.stringify(currentStrategy, null, 2) : "(none)",
-    ``,
-    `Emit the strategy for the next fire. ≤8 pairs per route, dates in 2026-05-01..2026-12-20.`,
-  ].join("\n");
-
-  const body = {
-    model: "claude-sonnet-4-6",
-    max_tokens: 4096,
-    system: PREFERENCES_PROMPT,
-    tools: [TOOL],
-    tool_choice: { type: "tool", name: "emit_strategy" },
-    messages: [{ role: "user", content: userContent }],
-  };
-
+async function callMessages(env: Env, messages: any[], tools: any[]): Promise<any> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -104,16 +20,114 @@ export async function callClaude(
       "x-api-key": env.ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4096,
+      system: AGENT_SYSTEM_PROMPT,
+      tools,
+      messages,
+    }),
   });
   if (!res.ok) {
     const t = await res.text();
     throw new Error(`anthropic ${res.status}: ${t.slice(0, 300)}`);
   }
-  const data = (await res.json()) as any;
-  const toolUse = data.content?.find(
-    (c: any) => c.type === "tool_use" && c.name === "emit_strategy",
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Multi-turn agent loop
+// ---------------------------------------------------------------------------
+
+export async function runAgentLoop(
+  env: Env,
+  state: State,
+  agentNotes: string,
+  recentLog: RunLogEntry[],
+): Promise<AgentLoopResult> {
+  const session = newSession(MAX_AGENT_CALLS);
+
+  // Build initial context message.
+  const bestLines = Object.entries(state.best_summary_per_route).map(
+    ([r, s]) => `  ${r}: ${s}`,
   );
-  if (!toolUse) throw new Error("anthropic returned no emit_strategy tool_use");
-  return toolUse.input as LlmResult;
+  const recentLines = recentLog.slice(-5).map((e) => {
+    const kept = e.kept ? "✓" : "✗";
+    const mean = e.mean !== null ? e.mean.toFixed(4) : "n/a";
+    return `  #${e.fire} ${kept} mean=${mean}  ${(e.agent_notes ?? e.llm_note ?? "").slice(0, 100)}`;
+  });
+
+  const initialMessage = [
+    `Fire #${state.fire_count + 1} — ${MAX_AGENT_CALLS} searches available.`,
+    ``,
+    `CURRENT ALL-TIME BESTS${state.best_mean !== null ? ` (mean ${state.best_mean.toFixed(4)}, streak ${state.no_improve_streak})` : " (none yet)"}:`,
+    bestLines.length ? bestLines.join("\n") : "  (none yet — first fire or all reverted)",
+    ``,
+    `LAST AGENT'S NOTES:`,
+    agentNotes || "  (none — this may be an early fire)",
+    ``,
+    `RECENT FIRE HISTORY:`,
+    recentLines.length ? recentLines.join("\n") : "  (none)",
+    ``,
+    `Search now. Use done() when finished — leave notes for the next agent.`,
+  ].join("\n");
+
+  const messages: any[] = [{ role: "user", content: initialMessage }];
+
+  let turns = 0;
+  const MAX_TURNS = 50; // safety ceiling on message pairs
+
+  while (turns < MAX_TURNS) {
+    const response = await callMessages(env, messages, TOOL_DEFINITIONS);
+    turns++;
+
+    // Append assistant message.
+    messages.push({ role: "assistant", content: response.content });
+
+    // Collect tool calls.
+    const toolUseBlocks = (response.content as any[]).filter((b) => b.type === "tool_use");
+
+    if (toolUseBlocks.length === 0) {
+      // No tool calls — agent finished without calling done() (rare). Exit.
+      break;
+    }
+
+    // Execute tools and collect results.
+    const toolResults: any[] = [];
+    for (const block of toolUseBlocks) {
+      const result = await dispatchTool(block.name, block.input ?? {}, session, env);
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: block.id,
+        content: result,
+      });
+      if (session.done) break; // stop executing further tools once done() called
+    }
+
+    messages.push({ role: "user", content: toolResults });
+
+    if (session.done) break;
+
+    // Budget nudge.
+    if (
+      session.searchesUsed >= session.budget - BUDGET_NUDGE_AT &&
+      session.searchesUsed < session.budget
+    ) {
+      const remaining = session.budget - session.searchesUsed;
+      messages.push({
+        role: "user",
+        content: `${remaining} search${remaining === 1 ? "" : "es"} remaining. Wrap up and call done() soon.`,
+      });
+    }
+
+    // Budget exhausted — force done.
+    if (session.searchesUsed >= session.budget) {
+      messages.push({
+        role: "user",
+        content: "Budget exhausted. Call done() now with your findings.",
+      });
+    }
+  }
+
+  return { session, turns };
 }

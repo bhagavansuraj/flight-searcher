@@ -104,8 +104,11 @@ def _state_panel(state: dict) -> Panel:
     mean = state.get("best_mean")
     streak = state.get("no_improve_streak", 0)
     stopped = state.get("stopped", False)
+    running = state.get("running", False)
 
     t = Text()
+    if running:
+        t.append("🔄 FIRE IN PROGRESS   ", style="bold cyan")
     t.append(f"fires: {fire}", style="bold")
     t.append("   ")
     mean_str = f"{mean:.4f}" if mean is not None else "n/a"
@@ -116,8 +119,9 @@ def _state_panel(state: dict) -> Panel:
         t.append("   [bold red]STOPPED[/bold red]")
 
     ts_str = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+    border = "cyan" if running else ("red" if stopped else "bright_blue")
     return Panel(t, title=f"[bold]flight-searcher[/bold]  [dim]as of {ts_str}[/dim]",
-                 border_style="bright_blue", padding=(0, 1))
+                 border_style=border, padding=(0, 1))
 
 
 def _log_table(log: list[dict]) -> Table:
@@ -127,6 +131,7 @@ def _log_table(log: list[dict]) -> Table:
     table.add_column("time (UTC)", width=16)
     table.add_column("kept", width=5, justify="center")
     table.add_column("mean", width=7, justify="right")
+    table.add_column("srch", width=5, justify="right", style="dim")
     table.add_column("note", ratio=1)
 
     for entry in reversed(log[-15:]):
@@ -140,16 +145,25 @@ def _log_table(log: list[dict]) -> Table:
         kept_style = "green" if entry.get("kept") else "red"
         mean = entry.get("mean")
         mean_str = f"{mean:.4f}" if mean is not None else "n/a"
+        searches = str(entry.get("agent_searches", ""))
         note = (entry.get("llm_note") or "")[:120]
-        table.add_row(fire_n, ts, f"[{kept_style}]{kept}[/{kept_style}]", mean_str, note)
+        table.add_row(fire_n, ts, f"[{kept_style}]{kept}[/{kept_style}]", mean_str, searches, note)
 
     return table
 
 
+def _agent_notes_panel(notes: str) -> Panel:
+    body = Text(notes.strip() or "(none)", style="dim" if not notes.strip() else "white")
+    return Panel(body, title="[dim]agent notes for this fire[/dim]",
+                 border_style="dim", padding=(0, 1))
+
+
 def build_renderable(data: dict):
+    from rich.console import Group
     state = data.get("state", {})
     best = state.get("best_summary_per_route", {})
     log = data.get("run_log", [])
+    agent_notes = data.get("agent_notes", "")
 
     route_panels = Columns(
         [_route_panel(r, best.get(r)) for r in ["LHR-BLR", "LHR-ATL", "LHR-LAX"]],
@@ -159,8 +173,12 @@ def build_renderable(data: dict):
     log_panel = Panel(_log_table(log), title="[dim]run log (latest first)[/dim]",
                       border_style="dim", padding=(0, 0))
 
-    from rich.console import Group
-    return Group(_state_panel(state), route_panels, log_panel)
+    return Group(
+        _state_panel(state),
+        route_panels,
+        _agent_notes_panel(agent_notes),
+        log_panel,
+    )
 
 
 # ---------------------------------------------------------------------------
